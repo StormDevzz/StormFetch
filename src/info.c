@@ -168,6 +168,8 @@ char *gen_gpu(void) {
     return "Unknown GPU";
 }
 
+int g_use_color = 0;
+
 char *gen_memory(void) {
     static char out[64];
     long total = 0, available = 0;
@@ -181,7 +183,9 @@ char *gen_memory(void) {
         }
         fclose(f);
     }
-    snprintf(out, sizeof(out), "%ldMiB / %ldMiB", total - available, total);
+    long used = total - available;
+    int pct = total > 0 ? (int)(used * 100 / total) : 0;
+    snprintf(out, sizeof(out), "%ldMiB / %ldMiB %s", used, total, make_bar(pct, g_use_color));
     return out;
 }
 
@@ -199,7 +203,9 @@ char *gen_swap(void) {
         fclose(f);
     }
     if (total == 0) return "none";
-    snprintf(out, sizeof(out), "%ldMiB / %ldMiB", total - free, total);
+    long used = total - free;
+    int pct = total > 0 ? (int)(used * 100 / total) : 0;
+    snprintf(out, sizeof(out), "%ldMiB / %ldMiB %s", used, total, make_bar(pct, g_use_color));
     return out;
 }
 
@@ -216,17 +222,11 @@ char *gen_disk(void) {
         unsigned long free = (unsigned long)(vfs.f_frsize * vfs.f_bfree) / (1024UL*1024UL*1024UL);
         unsigned long used = size - free;
         int pct = size > 0 ? (int)(used * 100 / size) : 0;
-        int bar_len = 10;
-        int filled = pct * bar_len / 100;
-        char bar[16];
-        for (int j = 0; j < bar_len; j++) bar[j] = j < filled ? '#' : '-';
-        bar[bar_len] = '\0';
-
         char part[128];
         if (strcmp(mounts[i], "/") == 0)
-            snprintf(part, sizeof(part), "/: %luG/%luG [%s] %d%%", used, size, bar, pct);
+            snprintf(part, sizeof(part), "/: %luG/%luG %s %d%%", used, size, make_bar(pct, g_use_color), pct);
         else
-            snprintf(part, sizeof(part), "%s: %luG/%luG [%s] %d%%", mounts[i], used, size, bar, pct);
+            snprintf(part, sizeof(part), "%s: %luG/%luG %s %d%%", mounts[i], used, size, make_bar(pct, g_use_color), pct);
 
         if (total == 0) strncpy(out, part, sizeof(out)-1);
         else { strncat(out, ", ", sizeof(out)-strlen(out)-1); strncat(out, part, sizeof(out)-strlen(out)-1); }

@@ -7,9 +7,12 @@
 #include <string.h>
 #include <unistd.h>
 
+#define VERSION "1.1.0"
+
 static int use_color = -1;
 static int logo_enabled = 1;
 static int bare = 0;
+static int no_header = 0;
 static int json = 0;
 static int separator = 0;
 static int do_sort = 0;
@@ -54,12 +57,14 @@ static void print_help(const char *prog) {
     printf("StormFetch - system information tool\n\n");
     printf("Options:\n");
     printf("  -h, --help              Show this help\n");
+    printf("  -v, --version           Show version\n");
     printf("  --list-sections         List all available sections\n");
     printf("  --no-<section>          Disable a section\n");
     printf("  --only-<section>        Show ONLY specified section (can be repeated)\n");
     printf("  --no-logo               Disable ASCII logo\n");
+    printf("  --no-header             Hide header (user@host, OS line)\n");
     printf("  --color <mode>          Color mode: always, never, auto (default)\n");
-    printf("  --bare                  Minimal output (no header)\n");
+    printf("  --bare                  Minimal output (no header, no logo, no separator)\n");
     printf("  --json                  Output in JSON format\n");
     printf("  --separator             Add separator line\n");
     printf("  --sort                  Sort sections alphabetically\n");
@@ -95,6 +100,10 @@ static void parse_args(int argc, char **argv) {
             print_help(argv[0]);
             exit(0);
         }
+        if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
+            printf("StormFetch v%s\n", VERSION);
+            exit(0);
+        }
         if (strcmp(argv[i], "--list-sections") == 0) {
             list_sections();
             exit(0);
@@ -105,6 +114,13 @@ static void parse_args(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--bare") == 0) {
             bare = 1;
+            no_header = 1;
+            logo_enabled = 0;
+            separator = 0;
+            continue;
+        }
+        if (strcmp(argv[i], "--no-header") == 0) {
+            no_header = 1;
             continue;
         }
         if (strcmp(argv[i], "--json") == 0) {
@@ -194,7 +210,7 @@ static void print_normal(void) {
     if (!user) user = "unknown";
     char *host = gen_host();
 
-    if (!bare) {
+    if (!no_header) {
         printf("\n");
         if (color)
             printf("  \033[1m%s@%s\033[0m\n", user, host);
@@ -205,7 +221,7 @@ static void print_normal(void) {
 
     if (logo_enabled) print_logo(color);
 
-    if (separator && !bare) {
+    if (separator && !no_header) {
         if (color)
             printf("  \033[2m%s\033[0m\n", "------------------------------");
         else
@@ -235,6 +251,8 @@ int main(int argc, char **argv) {
     if (config_path[0]) parse_config(config_path, sections, num_sections, &logo_enabled, &use_color);
 
     parse_args(argc, argv);
+
+    g_use_color = should_use_color();
 
     if (json) print_json();
     else print_normal();

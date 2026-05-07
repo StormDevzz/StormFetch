@@ -3,6 +3,8 @@
 
 #define OUTPUT_LEN 512
 
+extern int g_use_color;
+
 char *gen_os(void);
 char *gen_host(void);
 char *gen_kernel(void);

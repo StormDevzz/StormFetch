@@ -15,5 +15,6 @@ char   *read_first_line(const char *path);
 char   *read_value_from_proc(const char *path, const char *prefix);
 char   *exec_cmd(const char *cmd);
 int     count_digits(int n);
+char   *make_bar(int pct, int use_color);
 
 #endif

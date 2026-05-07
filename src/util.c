@@ -48,3 +48,29 @@ int count_digits(int n) {
     while (n) { n /= 10; c++; }
     return c;
 }
+
+char *make_bar(int pct, int use_color) {
+    static char bar[32];
+    int bar_len = 10;
+    int filled = pct * bar_len / 100;
+    if (filled > bar_len) filled = bar_len;
+    if (filled < 0) filled = 0;
+
+    char raw[16];
+    for (int j = 0; j < bar_len; j++)
+        raw[j] = j < filled ? '#' : '-';
+    raw[bar_len] = '\0';
+
+    if (!use_color) {
+        snprintf(bar, sizeof(bar), "[%s]", raw);
+        return bar;
+    }
+
+    const char *clr;
+    if (pct >= 80)      clr = "\033[31m";
+    else if (pct >= 50) clr = "\033[33m";
+    else                clr = "\033[32m";
+
+    snprintf(bar, sizeof(bar), "[%s%s\033[0m]", clr, raw);
+    return bar;
+}
