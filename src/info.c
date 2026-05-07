@@ -1,72 +1,11 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <unistd.h>
+#include "info.h"
+#include "util.h"
 #include <sys/utsname.h>
-#include <sys/sysinfo.h>
 #include <sys/statvfs.h>
-#include <dirent.h>
 #include <time.h>
 #include <pwd.h>
 
-#define MAX_LINE 1024
-#define MAX_SECTIONS 64
-#define SECTION_NAME_LEN 32
-#define OUTPUT_LEN 512
-#define LOGO_LINES 32
-#define MAX_IFACES 16
-#define MAX_THERMAL 16
-
-static int use_color = 1;
-
-/* ---------- helpers ---------- */
-
-static void trim_newline(char *s) {
-    size_t l = strlen(s);
-    while (l > 0 && (s[l-1] == '\n' || s[l-1] == '\r')) s[--l] = '\0';
-}
-
-static char *read_first_line(const char *path) {
-    static char buf[MAX_LINE];
-    FILE *f = fopen(path, "r");
-    if (!f) return NULL;
-    if (!fgets(buf, sizeof(buf), f)) { fclose(f); return NULL; }
-    fclose(f);
-    trim_newline(buf);
-    return buf;
-}
-
-static char *read_value_from_proc(const char *path, const char *prefix) {
-    static char buf[MAX_LINE];
-    FILE *f = fopen(path, "r");
-    if (!f) return NULL;
-    while (fgets(buf, sizeof(buf), f)) {
-        if (strncmp(buf, prefix, strlen(prefix)) == 0) {
-            char *val = buf + strlen(prefix);
-            while (*val == ' ' || *val == '\t' || *val == ':') val++;
-            trim_newline(val);
-            fclose(f);
-            return val;
-        }
-    }
-    fclose(f);
-    return NULL;
-}
-
-static char *exec_cmd(const char *cmd) {
-    static char buf[MAX_LINE];
-    FILE *f = popen(cmd, "r");
-    if (!f) return NULL;
-    if (!fgets(buf, sizeof(buf), f)) { pclose(f); return NULL; }
-    pclose(f);
-    trim_newline(buf);
-    return buf;
-}
-
-/* ---------- section generators ---------- */
-
-static char *gen_os(void) {
+char *gen_os(void) {
     static char out[OUTPUT_LEN];
     char *pretty = read_value_from_proc("/etc/os-release", "PRETTY_NAME=");
     if (pretty) {
@@ -80,13 +19,13 @@ static char *gen_os(void) {
     return out;
 }
 
-static char *gen_host(void) {
+char *gen_host(void) {
     static char out[256];
     if (gethostname(out, sizeof(out)) == 0) return out;
     return "unknown";
 }
 
-static char *gen_kernel(void) {
+char *gen_kernel(void) {
     static char out[OUTPUT_LEN];
     struct utsname u;
     uname(&u);
@@ -94,7 +33,7 @@ static char *gen_kernel(void) {
     return out;
 }
 
-static char *gen_uptime(void) {
+char *gen_uptime(void) {
     static char out[64];
     FILE *f = fopen("/proc/uptime", "r");
     if (!f) return "unknown";
@@ -110,7 +49,7 @@ static char *gen_uptime(void) {
     return out;
 }
 
-static char *gen_packages(void) {
+char *gen_packages(void) {
     static char out[64];
     int count = 0;
     char *buf;
@@ -132,14 +71,14 @@ static char *gen_packages(void) {
     return "unknown";
 }
 
-static char *gen_shell(void) {
+char *gen_shell(void) {
     char *shell = getenv("SHELL");
     if (!shell) return "unknown";
     char *p = strrchr(shell, '/');
     return p ? p + 1 : shell;
 }
 
-static char *gen_de_wm(void) {
+char *gen_de_wm(void) {
     static char out[OUTPUT_LEN];
     char *xdg = getenv("XDG_CURRENT_DESKTOP");
     if (xdg) { strncpy(out, xdg, sizeof(out)-1); return out; }
@@ -147,18 +86,17 @@ static char *gen_de_wm(void) {
     if (xdg) { strncpy(out, xdg, sizeof(out)-1); return out; }
     xdg = getenv("GDMSESSION");
     if (xdg) { strncpy(out, xdg, sizeof(out)-1); return out; }
-    /* try WM via wmctrl or similar */
     char *wm = exec_cmd("wmctrl -m 2>/dev/null | head -1 | cut -d: -f2");
     if (wm && strlen(wm) > 0) { snprintf(out, sizeof(out), "%s", wm); return out; }
     return "unknown";
 }
 
-static char *gen_terminal(void) {
+char *gen_terminal(void) {
     char *term = getenv("TERM");
     return term ? term : "unknown";
 }
 
-static char *gen_cpu(void) {
+char *gen_cpu(void) {
     static char out[OUTPUT_LEN];
     char *model = read_value_from_proc("/proc/cpuinfo", "model name");
     if (!model) return "Unknown CPU";
@@ -194,13 +132,11 @@ static char *gen_cpu(void) {
     return out;
 }
 
-static char *gen_gpu(void) {
+char *gen_gpu(void) {
     static char out[OUTPUT_LEN] = {0};
-    /* Try lspci first */
     char *gpu = exec_cmd("lspci 2>/dev/null | grep -iE -- 'vga|3d|display' | head -5 | sed 's/.*: //'");
     if (gpu && strlen(gpu) > 0) {
         strncpy(out, gpu, sizeof(out)-1);
-        /* check for multiple GPUs */
         char *more = exec_cmd("lspci 2>/dev/null | grep -iE 'vga|3d|display' | wc -l");
         int n = more ? atoi(more) : 1;
         if (n > 1) {
@@ -210,7 +146,6 @@ static char *gen_gpu(void) {
         }
         return out;
     }
-    /* Fallback: try /sys/class/drm */
     DIR *d = opendir("/sys/class/drm");
     if (d) {
         struct dirent *de;
@@ -233,7 +168,7 @@ static char *gen_gpu(void) {
     return "Unknown GPU";
 }
 
-static char *gen_memory(void) {
+char *gen_memory(void) {
     static char out[64];
     long total = 0, available = 0;
     FILE *f = fopen("/proc/meminfo", "r");
@@ -250,7 +185,7 @@ static char *gen_memory(void) {
     return out;
 }
 
-static char *gen_swap(void) {
+char *gen_swap(void) {
     static char out[64];
     long total = 0, free = 0;
     FILE *f = fopen("/proc/meminfo", "r");
@@ -268,7 +203,7 @@ static char *gen_swap(void) {
     return out;
 }
 
-static char *gen_disk(void) {
+char *gen_disk(void) {
     static char out[OUTPUT_LEN];
     struct statvfs vfs;
     char total = 0;
@@ -280,11 +215,18 @@ static char *gen_disk(void) {
         unsigned long size = (unsigned long)(vfs.f_frsize * vfs.f_blocks) / (1024UL*1024UL*1024UL);
         unsigned long free = (unsigned long)(vfs.f_frsize * vfs.f_bfree) / (1024UL*1024UL*1024UL);
         unsigned long used = size - free;
+        int pct = size > 0 ? (int)(used * 100 / size) : 0;
+        int bar_len = 10;
+        int filled = pct * bar_len / 100;
+        char bar[16];
+        for (int j = 0; j < bar_len; j++) bar[j] = j < filled ? '#' : '-';
+        bar[bar_len] = '\0';
+
         char part[128];
         if (strcmp(mounts[i], "/") == 0)
-            snprintf(part, sizeof(part), "/: %luG/%luG", used, size);
+            snprintf(part, sizeof(part), "/: %luG/%luG [%s] %d%%", used, size, bar, pct);
         else
-            snprintf(part, sizeof(part), "%s: %luG/%luG", mounts[i], used, size);
+            snprintf(part, sizeof(part), "%s: %luG/%luG [%s] %d%%", mounts[i], used, size, bar, pct);
 
         if (total == 0) strncpy(out, part, sizeof(out)-1);
         else { strncat(out, ", ", sizeof(out)-strlen(out)-1); strncat(out, part, sizeof(out)-strlen(out)-1); }
@@ -294,7 +236,7 @@ static char *gen_disk(void) {
     return out;
 }
 
-static char *gen_network(void) {
+char *gen_network(void) {
     static char out[OUTPUT_LEN];
     out[0] = '\0';
     struct dirent **entries;
@@ -326,7 +268,7 @@ static char *gen_network(void) {
     return out;
 }
 
-static char *gen_local_ip(void) {
+char *gen_local_ip(void) {
     static char out[OUTPUT_LEN];
     char *ip = exec_cmd("ip -4 addr show scope global 2>/dev/null | grep inet | awk '{print $2}' | head -3 | paste -sd, ");
     if (ip && strlen(ip) > 0) { strncpy(out, ip, sizeof(out)-1); return out; }
@@ -335,7 +277,7 @@ static char *gen_local_ip(void) {
     return "unknown";
 }
 
-static char *gen_public_ip(void) {
+char *gen_public_ip(void) {
     static char out[128];
     char *ip = exec_cmd("curl -s --connect-timeout 3 https://ifconfig.me 2>/dev/null");
     if (!ip || strlen(ip) == 0)
@@ -344,7 +286,7 @@ static char *gen_public_ip(void) {
     return "unavailable";
 }
 
-static char *gen_processes(void) {
+char *gen_processes(void) {
     static char out[32];
     DIR *d = opendir("/proc");
     if (!d) return "unknown";
@@ -358,18 +300,17 @@ static char *gen_processes(void) {
     return out;
 }
 
-static char *gen_load_avg(void) {
+char *gen_load_avg(void) {
     static char out[64];
     char *load = read_first_line("/proc/loadavg");
     if (!load) return "unknown";
-    /* format: "0.12 0.34 0.56 1/234 5678" */
     char *space = strrchr(load, ' ');
-    if (space) *space = '\0'; /* cut off last field */
+    if (space) *space = '\0';
     strncpy(out, load, sizeof(out)-1);
     return out;
 }
 
-static char *gen_battery(void) {
+char *gen_battery(void) {
     static char out[OUTPUT_LEN];
     out[0] = '\0';
     for (int i = 0; i < 10; i++) {
@@ -400,7 +341,7 @@ static char *gen_battery(void) {
     return out;
 }
 
-static char *gen_motherboard(void) {
+char *gen_motherboard(void) {
     static char out[OUTPUT_LEN];
     char vbuf[128] = {0}, nbuf[128] = {0};
     char *v = read_first_line("/sys/class/dmi/id/board_vendor");
@@ -413,7 +354,7 @@ static char *gen_motherboard(void) {
     return "unknown";
 }
 
-static char *gen_bios(void) {
+char *gen_bios(void) {
     static char out[OUTPUT_LEN];
     char vbuf[128] = {0}, ver[128] = {0}, dbuf[128] = {0};
     char *v = read_first_line("/sys/class/dmi/id/bios_vendor");
@@ -430,19 +371,17 @@ static char *gen_bios(void) {
     return out;
 }
 
-static char *gen_sound(void) {
+char *gen_sound(void) {
     static char out[OUTPUT_LEN];
     char *cards = exec_cmd("cat /proc/asound/cards 2>/dev/null | grep -v -- '---' | grep -v '^ *$' | head -5 | awk -F'[][]' '{print $2}' | paste -sd, ");
     if (cards && strlen(cards) > 0) { strncpy(out, cards, sizeof(out)-1); return out; }
     return "unknown";
 }
 
-static char *gen_resolution(void) {
+char *gen_resolution(void) {
     static char out[OUTPUT_LEN];
-    /* Try xrandr first */
     char *res = exec_cmd("xrandr --current 2>/dev/null | grep ' connected' | grep -oP '\\d+x\\d+' | head -3 | paste -sd, ");
     if (res && strlen(res) > 0) { snprintf(out, sizeof(out), "%s", res); return out; }
-    /* Fallback: /sys/class/drm */
     DIR *d = opendir("/sys/class/drm");
     if (d) {
         struct dirent *de;
@@ -476,7 +415,7 @@ static char *gen_resolution(void) {
     return "unknown";
 }
 
-static char *gen_temperature(void) {
+char *gen_temperature(void) {
     static char out[OUTPUT_LEN];
     out[0] = '\0';
     struct dirent **entries;
@@ -507,367 +446,16 @@ static char *gen_temperature(void) {
     return out;
 }
 
-static char *gen_users(void) {
+char *gen_users(void) {
     static char out[256];
     char *users = exec_cmd("who 2>/dev/null | awk '{print $1}' | sort -u | paste -sd, ");
     if (users && strlen(users) > 0) { strncpy(out, users, sizeof(out)-1); return out; }
     return "unknown";
 }
 
-/* ---------- section table ---------- */
-
-typedef struct {
-    char name[SECTION_NAME_LEN];
-    int enabled;
-    char *(*gen)(void);
-} Section;
-
-static Section sections[] = {
-    {"os",           1, gen_os},
-    {"host",         1, gen_host},
-    {"kernel",       1, gen_kernel},
-    {"uptime",       1, gen_uptime},
-    {"packages",     1, gen_packages},
-    {"shell",        1, gen_shell},
-    {"de-wm",        1, gen_de_wm},
-    {"terminal",     1, gen_terminal},
-    {"cpu",          1, gen_cpu},
-    {"gpu",          1, gen_gpu},
-    {"memory",       1, gen_memory},
-    {"swap",         1, gen_swap},
-    {"disk",         1, gen_disk},
-    {"network",      1, gen_network},
-    {"local-ip",     1, gen_local_ip},
-    {"public-ip",    0, gen_public_ip},
-    {"processes",    1, gen_processes},
-    {"load-avg",     1, gen_load_avg},
-    {"battery",      1, gen_battery},
-    {"motherboard",  1, gen_motherboard},
-    {"bios",         1, gen_bios},
-    {"sound",        1, gen_sound},
-    {"resolution",   1, gen_resolution},
-    {"temperature",  1, gen_temperature},
-    {"users",        1, gen_users},
-};
-
-static int num_sections = sizeof(sections) / sizeof(sections[0]);
-
-/* ---------- ascii logo ---------- */
-
-static int logo_enabled = 1;
-
-static const char *get_os_id(void) {
-    static char osid[64] = {0};
-    if (osid[0]) return osid;
-
-    char *id = read_value_from_proc("/etc/os-release", "ID=");
-    if (id) {
-        if (id[0] == '"') { memmove(id, id+1, strlen(id)); char *e = strrchr(id, '"'); if (e) *e = '\0'; }
-        strncpy(osid, id, sizeof(osid)-1);
-        for (char *p = osid; *p; p++) *p = tolower(*p);
-    } else if (access("/etc/debian_version", F_OK) == 0) strcpy(osid, "debian");
-    else if (access("/etc/arch-release", F_OK) == 0) strcpy(osid, "arch");
-    else if (access("/etc/fedora-release", F_OK) == 0) strcpy(osid, "fedora");
-    else strcpy(osid, "linux");
-    return osid;
-}
-
-static void print_logo(void) {
-    if (!logo_enabled) return;
-
-    const char *os = get_os_id();
-    const char *color = "";
-
-    if (use_color) {
-        if (strcmp(os, "arch") == 0) color = "\033[36m";
-        else if (strcmp(os, "debian") == 0) color = "\033[31m";
-        else if (strcmp(os, "ubuntu") == 0) color = "\033[31m";
-        else if (strcmp(os, "fedora") == 0) color = "\033[34m";
-        else if (strcmp(os, "void") == 0) color = "\033[32m";
-        else if (strcmp(os, "gentoo") == 0) color = "\033[35m";
-        else if (strcmp(os, "alpine") == 0) color = "\033[34m";
-        else if (strcmp(os, "manjaro") == 0) color = "\033[32m";
-        else if (strcmp(os, "mint") == 0) color = "\033[32m";
-        else if (strcmp(os, "freebsd") == 0) color = "\033[31m";
-        else if (strcmp(os, "pop") == 0) color = "\033[33m";
-        else color = "\033[33m";
-    }
-
-    if (use_color) printf("%s", color);
-
-    if (strcmp(os, "arch") == 0) {
-        printf("       /\\\n");
-        printf("      /  \\\n");
-        printf("     /\\   \\\n");
-        printf("    /      \\\n");
-        printf("   /   ,,   \\\n");
-        printf("  /   |  |  \\\n");
-        printf(" /_-''    ''-_\\\n");
-    } else if (strcmp(os, "debian") == 0) {
-        printf("   _,met$$$$$$gg.\n");
-        printf(" ,g$$$$$$$$$$$$$$P.\n");
-        printf(",g$$P\"\"       \"\"\"Y$.\"\n");
-        printf(",$$P'              `$$$.\n");
-        printf("',$$P       ,ggs.     `$$b\n");
-        printf("`d$$'     ,$P\"'   .    $$$\n");
-        printf(" $$P      d$'     ,    $$P\n");
-        printf(" $$:      $$.   -    ,d$$'\n");
-        printf(" $$;      Y$b._   _,d$P'\n");
-        printf(" Y$$.    `.`\"Y$$$$P\"'\n");
-    } else if (strcmp(os, "ubuntu") == 0) {
-        printf("         .-.\n");
-        printf("        /   \\\n");
-        printf("       |     |\n");
-        printf("       |     |\n");
-        printf("        \\   /\n");
-        printf("         `-'\n");
-        printf("      _   _   _\n");
-        printf("    _| |_| |_| |_\n");
-        printf("   |               |\n");
-        printf("   |    Ubuntu     |\n");
-    } else if (strcmp(os, "fedora") == 0) {
-        printf("       _____\n");
-        printf("      /   __|.\n");
-        printf("     |  /    |\n");
-        printf("     | |     |\n");
-        printf("     |  \\___/|\n");
-        printf("     |       |\n");
-        printf("     |   |   |\n");
-        printf("     |   |   |\n");
-        printf("     |___|___|\n");
-    } else if (strcmp(os, "void") == 0) {
-        printf("       ______\n");
-        printf("      /      \\\n");
-        printf("     |  () () |\n");
-        printf("      \\  __  /\n");
-        printf("       |    |\n");
-        printf("       |    |\n");
-        printf("       |____|\n");
-    } else if (strcmp(os, "gentoo") == 0) {
-        printf("        _-----_\n");
-        printf("       /       \\\n");
-        printf("      |  O   O  |\n");
-        printf("      |    _    |\n");
-        printf("       \\  ---  /\n");
-        printf("        \\_____/\n");
-    } else if (strcmp(os, "alpine") == 0) {
-        printf("       /\\ /\\\n");
-        printf("      /  \\ /  \\\n");
-        printf("     /    /\\    \\\n");
-        printf("    /    /  \\    \\\n");
-        printf("   /    /    \\    \\\n");
-        printf("  /    /      \\    \\\n");
-        printf(" /____/        \\____\\\n");
-    } else if (strcmp(os, "manjaro") == 0) {
-        printf(" ██████████████████\n");
-        printf(" ██████████████████\n");
-        printf(" ██████████████████\n");
-        printf(" ██████████████████\n");
-        printf(" ██████████████████\n");
-        printf(" ██████████████████\n");
-    } else if (strcmp(os, "mint") == 0) {
-        printf(" _______________\n");
-        printf("|  ___________  |\n");
-        printf("| |           | |\n");
-        printf("| |  LINUX    | |\n");
-        printf("| |   MINT    | |\n");
-        printf("| |___________| |\n");
-        printf("|_______________|\n");
-    } else if (strcmp(os, "freebsd") == 0) {
-        printf("  ,        ,\n");
-        printf("  |\\      /|\n");
-        printf("  | \\    / |\n");
-        printf("  |  \\  /  |\n");
-        printf("  |   \\/   |\n");
-        printf("  |        |\n");
-        printf("  |        |\n");
-        printf("  ----------\n");
-    } else if (strcmp(os, "pop") == 0) {
-        printf("            .\n");
-        printf("           / \\\n");
-        printf("          /   \\\n");
-        printf("         /  .  \\\n");
-        printf("        /  /\\  \\\n");
-        printf("       /  /  \\  \\\n");
-        printf("      /  /    \\  \\\n");
-        printf("     /  /      \\  \\\n");
-        printf("    /  /        \\  \\\n");
-        printf("   /  /          \\  \\\n");
-        printf("  /__/            \\__\\\n");
-    } else {
-        printf("  ╔══════════════════╗\n");
-        printf("  ║                  ║\n");
-        printf("  ║    %-12s   ║\n", os);
-        printf("  ║                  ║\n");
-        printf("  ╚══════════════════╝\n");
-    }
-    if (use_color) printf("\033[0m");
-}
-
-/* ---------- config parsing ---------- */
-
-static void parse_config(const char *path) {
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    char line[MAX_LINE];
-    while (fgets(line, sizeof(line), f)) {
-        trim_newline(line);
-        if (line[0] == '#' || line[0] == '\0') continue;
-        char sec[SECTION_NAME_LEN] = {0};
-        char val[8] = {0};
-        if (sscanf(line, "%31s = %7s", sec, val) < 2) continue;
-        for (int i = 0; i < num_sections; i++) {
-            if (strcmp(sections[i].name, sec) == 0) {
-                if (strcmp(val, "no") == 0 || strcmp(val, "false") == 0 || strcmp(val, "0") == 0)
-                    sections[i].enabled = 0;
-                else if (strcmp(val, "yes") == 0 || strcmp(val, "true") == 0 || strcmp(val, "1") == 0)
-                    sections[i].enabled = 1;
-                break;
-            }
-        }
-        if (strcmp(sec, "logo") == 0) {
-            if (strcmp(val, "no") == 0 || strcmp(val, "false") == 0 || strcmp(val, "0") == 0)
-                logo_enabled = 0;
-            else logo_enabled = 1;
-        }
-        if (strcmp(sec, "color") == 0) {
-            if (strcmp(val, "no") == 0 || strcmp(val, "false") == 0 || strcmp(val, "0") == 0)
-                use_color = 0;
-            else use_color = 1;
-        }
-    }
-    fclose(f);
-}
-
-/* ---------- cli ---------- */
-
-static void print_help(const char *prog) {
-    printf("Usage: %s [OPTIONS]\n\n", prog);
-    printf("Stormfetch - system information tool\n\n");
-    printf("Options:\n");
-    printf("  -h, --help              Show this help\n");
-    printf("  --list-sections         List all available sections\n");
-    printf("  --no-<section>          Disable a section\n");
-    printf("  --only-<section>        Show ONLY specified section (can be repeated)\n");
-    printf("  --no-logo               Disable ASCII logo\n");
-    printf("  --no-color              Disable colored output\n");
-    printf("  --config <file>         Use custom config file\n");
-    printf("\nAvailable sections:");
-    for (int i = 0; i < num_sections; i++) {
-        printf("\n  %s", sections[i].name);
-        if (!sections[i].enabled) printf(" (disabled by default)");
-    }
-    printf("\n  logo\n");
-    printf("\nConfig file: ~/.config/stormfetch/config\n");
-}
-
-static void list_sections(void) {
-    for (int i = 0; i < num_sections; i++) {
-        printf("%s\n", sections[i].name);
-    }
-    printf("logo\n");
-}
-
-static int find_section(const char *name) {
-    for (int i = 0; i < num_sections; i++) {
-        if (strcmp(sections[i].name, name) == 0) return i;
-    }
-    return -1;
-}
-
-static void parse_args(int argc, char **argv) {
-    int only_mode = 0;
-
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            print_help(argv[0]);
-            exit(0);
-        }
-        if (strcmp(argv[i], "--list-sections") == 0) {
-            list_sections();
-            exit(0);
-        }
-        if (strcmp(argv[i], "--no-logo") == 0) {
-            logo_enabled = 0;
-            continue;
-        }
-        if (strcmp(argv[i], "--no-color") == 0) {
-            use_color = 0;
-            continue;
-        }
-        if (strcmp(argv[i], "--config") == 0) {
-            if (i + 1 < argc) {
-                parse_config(argv[++i]);
-            }
-            continue;
-        }
-        if (strncmp(argv[i], "--no-", 5) == 0) {
-            char *sec = argv[i] + 5;
-            int idx = find_section(sec);
-            if (idx >= 0) sections[idx].enabled = 0;
-            continue;
-        }
-        if (strncmp(argv[i], "--only-", 7) == 0) {
-            if (!only_mode) {
-                for (int j = 0; j < num_sections; j++) sections[j].enabled = 0;
-                only_mode = 1;
-            }
-            char *sec = argv[i] + 7;
-            int idx = find_section(sec);
-            if (idx >= 0) sections[idx].enabled = 1;
-            continue;
-        }
-        /* unrecognized */
-        fprintf(stderr, "Unknown option: %s\n", argv[i]);
-        fprintf(stderr, "Try '%s --help' for more information.\n", argv[0]);
-        exit(1);
-    }
-}
-
-/* ---------- main ---------- */
-
-int main(int argc, char **argv) {
-    /* default config path */
-    char config_path[512] = {0};
-    char *home = getenv("HOME");
-    if (home) snprintf(config_path, sizeof(config_path), "%s/.config/stormfetch/config", home);
-
-    /* first pass: check if --config was provided before default */
-    /* we'll parse default config first, then cli can override */
-    if (config_path[0]) parse_config(config_path);
-
-    /* parse CLI */
-    parse_args(argc, argv);
-
-    /* header */
-    char *user = getenv("USER");
-    if (!user) user = getenv("LOGNAME");
-    if (!user) user = "unknown";
-    char *host = gen_host();
-
-    printf("\n");
-    if (use_color)
-        printf("  \033[1m%s@%s\033[0m\n", user, host);
-    else
-        printf("  %s@%s\n", user, host);
-
-    printf("  %s\n\n", gen_os());
-
-    /* print logo */
-    print_logo();
-
-    /* print sections */
-    for (int i = 0; i < num_sections; i++) {
-        if (!sections[i].enabled) continue;
-        char *val = sections[i].gen();
-        if (val && strlen(val) > 0) {
-            if (use_color)
-                printf("  \033[1m%-12s\033[0m %s\n", sections[i].name, val);
-            else
-                printf("  %-12s %s\n", sections[i].name, val);
-        }
-    }
-
-    printf("\n");
-    return 0;
+char *gen_locale(void) {
+    static char out[128];
+    char *lang = getenv("LANG");
+    if (lang) { strncpy(out, lang, sizeof(out)-1); return out; }
+    return "unknown";
 }

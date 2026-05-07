@@ -1,4 +1,5 @@
 stormfetch
 sysinfo
+src/*.o
 *.o
 *.out
